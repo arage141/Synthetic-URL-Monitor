@@ -3,19 +3,39 @@ import FloatingLabelInput from "../helper/FloatingLabelInput";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import z from "zod";
+import { useState } from "react";
 
 const formSchema = z.object({
   name: z.string().min(1, "Name is required"),
   url: z.url("Invalid URL"),
   interval: z
     .string()
+    .refine((val) => val !== "", "Interval is required")
     .refine((val) => Number(val) >= 0, "Interval must be >= 0"),
-  timeout: z.string().refine((val) => Number(val) >= 0, "Timeout must be >= 0"),
-  expectedCodes: z.string().optional(),
+  timeout: z
+    .string()
+    .refine((val) => val !== "", "Timeout is required")
+    .refine((val) => Number(val) >= 0, "Timeout must be >= 0"),
+  expectedCodes: z
+    .string()
+    .min(1, "Expected codes are required")
+    .refine((val) => {
+      const codes = val.split(",").map((v) => v.trim());
+      return codes.every((code) => /^\d{3}$/.test(code));
+    }, "Must be comma-separated 3-digit codes (e.g., 200, 201, 404)"),
   enabled: z.boolean().optional(), // no validation, but required for resolver
 });
 
 type FormType = z.infer<typeof formSchema>;
+
+interface URLObject {
+  name: string;
+  url: string;
+  interval: number;
+  timeout: number;
+  expectedCodes: number[];
+  enabled?: boolean | undefined;
+}
 
 interface ApiResponseUrl {
   id: string;
@@ -66,6 +86,7 @@ const formatEpoch = (epochString: string) => {
 };
 
 const UrlMonitor = () => {
+  const [urlArray, setUrlArray] = useState<URLObject[]>([]);
   const {
     control,
     handleSubmit,
@@ -96,8 +117,11 @@ const UrlMonitor = () => {
     };
 
     console.log("Final Payload:", payload);
+    setUrlArray((prev) => [...prev, payload]);
     reset();
   };
+
+  console.log(urlArray);
 
   return (
     <Box py={3} px={12}>
@@ -193,8 +217,23 @@ const UrlMonitor = () => {
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v === "") field.onChange("");
-                          else
+                          else if (/^\d+$/.test(v)) {
                             field.onChange(Math.max(0, Number(v)).toString());
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (
+                            !/[0-9]/.test(e.key) &&
+                            ![
+                              "Backspace",
+                              "Delete",
+                              "ArrowLeft",
+                              "ArrowRight",
+                              "Tab",
+                            ].includes(e.key)
+                          ) {
+                            e.preventDefault();
+                          }
                         }}
                       />
                     )}
@@ -217,8 +256,24 @@ const UrlMonitor = () => {
                         onChange={(e) => {
                           const v = e.target.value;
                           if (v === "") field.onChange("");
-                          else
+                          else if (/^\d+$/.test(v)) {
                             field.onChange(Math.max(0, Number(v)).toString());
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          // Prevent typing letters, special characters (except Backspace, Delete, Arrow keys, Tab)
+                          if (
+                            !/[0-9]/.test(e.key) &&
+                            ![
+                              "Backspace",
+                              "Delete",
+                              "ArrowLeft",
+                              "ArrowRight",
+                              "Tab",
+                            ].includes(e.key)
+                          ) {
+                            e.preventDefault();
+                          }
                         }}
                       />
                     )}
