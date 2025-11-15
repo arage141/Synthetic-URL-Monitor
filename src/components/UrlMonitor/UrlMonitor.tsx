@@ -18,7 +18,6 @@ import {
 import FloatingLabelInput from "../helper/FloatingLabelInput";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import z from "zod";
 import { useState } from "react";
 import {
   XAxis,
@@ -29,85 +28,18 @@ import {
   Area,
   AreaChart,
 } from "recharts";
-
-// Add global styles for animations
-const animationStyles = `
-  @keyframes slideDown {
-    from {
-      opacity: 0;
-      max-height: 0;
-      transform: translateY(-20px);
-    }
-    to {
-      opacity: 1;
-      max-height: 1000px;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes slideUp {
-    from {
-      opacity: 1;
-      max-height: 1000px;
-      transform: translateY(0);
-    }
-    to {
-      opacity: 0;
-      max-height: 0;
-      transform: translateY(-20px);
-    }
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  @keyframes fadeOut {
-    from {
-      opacity: 1;
-    }
-    to {
-      opacity: 0;
-    }
-  }
-
-  @keyframes chartFadeInSlide {
-    from {
-      opacity: 0;
-      transform: scale(0.95) translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-  }
-
-  @keyframes chartPulse {
-    0% {
-      box-shadow: 0px 8px 32px rgba(91, 127, 255, 0.12);
-    }
-    50% {
-      box-shadow: 0px 12px 40px rgba(91, 127, 255, 0.28);
-    }
-    100% {
-      box-shadow: 0px 8px 32px rgba(91, 127, 255, 0.12);
-    }
-  }
-
-  @keyframes shimmer {
-    0% {
-      background-position: -1000px 0;
-    }
-    100% {
-      background-position: 1000px 0;
-    }
-  }
-`;
+import {
+  animationStyles,
+  chartData,
+  formatEpoch,
+  formSchema,
+  mockApiResponse,
+  monitoringStatusData,
+  urlStatsData,
+  type FormType,
+  type StatCardProps,
+  type URLObject,
+} from "../helper";
 
 // Inject styles
 if (typeof document !== "undefined") {
@@ -116,230 +48,20 @@ if (typeof document !== "undefined") {
   document.head.appendChild(styleSheet);
 }
 
-const formSchema = z.object({
-  name: z.string().min(1, "Name is required"),
-  url: z.url("Invalid URL"),
-  interval: z
-    .string()
-    .refine((val) => val !== "", "Interval is required")
-    .refine((val) => Number(val) >= 0, "Interval must be >= 0"),
-  timeout: z
-    .string()
-    .refine((val) => val !== "", "Timeout is required")
-    .refine((val) => Number(val) >= 0, "Timeout must be >= 0"),
-  expectedCodes: z
-    .string()
-    .min(1, "Expected codes are required")
-    .refine((val) => {
-      const codes = val.split(",").map((v) => v.trim());
-      return codes.every((code) => /^\d{3}$/.test(code));
-    }, "Must be comma-separated 3-digit codes (e.g., 200, 201, 404)"),
-  enabled: z.boolean().optional(),
-});
-
-type FormType = z.infer<typeof formSchema>;
-
-interface URLObject {
-  id: string;
-  name: string;
-  url: string;
-  interval: number;
-  timeout: number;
-  expectedCodes: number[];
-  enabled?: boolean | undefined;
-}
-
-interface ApiResponseUrl {
-  id: string;
-  name: string;
-  url: string;
-  date: string;
-  statusCode: string;
-  responseTime: string;
-}
-
-interface UrlStats {
-  totalUrls: number;
-  healthy: number;
-  failing: number;
-  lastCheck: string; // epoch string
-  totalChecks: number;
-  successRate: number;
-  avgResponseTime: number;
-}
-
-interface MonitoringStatus {
-  id: string;
-  name: string;
-  url: string;
-  avgResponseTime: number;
-  successRate: number;
-  totalChecks: number;
-  status: "HEALTHY" | "FAILING" | "DEGRADED";
-  lastCode: number;
-}
-
-const urlStatsData: UrlStats = {
-  totalUrls: 1,
-  healthy: 1,
-  failing: 0,
-  lastCheck: "1762519842000",
-  totalChecks: 520,
-  successRate: 75.77,
-  avgResponseTime: 597.97,
-};
-
-const monitoringStatusData: MonitoringStatus[] = [
-  {
-    id: "1",
-    name: "Jenkins API",
-    url: "https://jenkins.cloudtuner.ai",
-    avgResponseTime: 243,
-    successRate: 92,
-    totalChecks: 100,
-    status: "HEALTHY",
-    lastCode: 403,
-  },
-  // {
-  //   id: "2",
-  //   name: "Backend Service",
-  //   url: "https://api.example.com",
-  //   avgResponseTime: 156,
-  //   successRate: 98,
-  //   totalChecks: 100,
-  //   status: "HEALTHY",
-  //   lastCode: 200,
-  // },
-  // {
-  //   id: "3",
-  //   name: "Frontend Server",
-  //   url: "https://app.example.com",
-  //   avgResponseTime: 320,
-  //   successRate: 85,
-  //   totalChecks: 100,
-  //   status: "DEGRADED",
-  //   lastCode: 500,
-  // },
-];
-
-// Chart data structure for Daily Response Time Trends
-interface ChartDataPoint {
-  time: string;
-  "Jenkins API": number;
-  "Backend Service": number;
-  "Frontend Server": number;
-}
-
-const chartData: ChartDataPoint[] = [
-  {
-    time: "12:00",
-    "Jenkins API": 245,
-    "Backend Service": 142,
-    "Frontend Server": 310,
-  },
-  {
-    time: "13:00",
-    "Jenkins API": 218,
-    "Backend Service": 158,
-    "Frontend Server": 295,
-  },
-  {
-    time: "14:00",
-    "Jenkins API": 267,
-    "Backend Service": 131,
-    "Frontend Server": 342,
-  },
-  {
-    time: "15:00",
-    "Jenkins API": 189,
-    "Backend Service": 165,
-    "Frontend Server": 278,
-  },
-  {
-    time: "16:00",
-    "Jenkins API": 301,
-    "Backend Service": 144,
-    "Frontend Server": 398,
-  },
-  {
-    time: "17:00",
-    "Jenkins API": 242,
-    "Backend Service": 176,
-    "Frontend Server": 321,
-  },
-  {
-    time: "18:00",
-    "Jenkins API": 215,
-    "Backend Service": 128,
-    "Frontend Server": 289,
-  },
-  {
-    time: "19:00",
-    "Jenkins API": 256,
-    "Backend Service": 152,
-    "Frontend Server": 356,
-  },
-];
-
-const mockApiResponse: ApiResponseUrl[] = [
-  {
-    id: "1",
-    name: "test 1",
-    url: "https://example1.com",
-    date: "1730970720000",
-    responseTime: "150",
-    statusCode: "200",
-  },
-  {
-    id: "2",
-    name: "test 2",
-    url: "https://example2.com",
-    date: "1730972520000",
-    responseTime: "320",
-    statusCode: "500",
-  },
-  {
-    id: "3",
-    name: "test 3",
-    url: "https://example3.com",
-    date: "1830972520000",
-    responseTime: "420",
-    statusCode: "403",
-  },
-];
-
-const formatEpoch = (epochString: string) => {
-  const date = new Date(Number(epochString));
-  return date.toLocaleString("en-US", {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    hour12: true,
-  });
-};
-
-interface StatCardProps {
-  label: string;
-  value: string | number;
-  color?: string;
-}
-
 const StatCard: React.FC<StatCardProps> = ({ label, value, color }) => {
   return (
     <Card
       sx={{
         background: color ?? "linear-gradient(135deg, #94A3B8, #64748B)",
         color: "white",
-        minWidth: 250,
+        minWidth: { xs: "100%", sm: 200, md: 250 },
+        width: { xs: "100%", sm: "auto" },
         borderRadius: 1,
         padding: 0,
         boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
         transition: "0.25s ease",
         "&:hover": {
           boxShadow: "0 6px 16px rgba(0,0,0,0.2)",
-          // transform: "translateY(-3px)",
         },
       }}
     >
@@ -453,7 +175,7 @@ const UrlMonitor = () => {
   };
 
   return (
-    <Box py={3} px={12}>
+    <Box sx={{ py: 3, px: { xs: 2, sm: 4, md: 8, lg: 12 } }}>
       <Box>
         <Typography variant="h6">Synthetic URL Monitor</Typography>
         <Typography variant="body1">
@@ -462,351 +184,430 @@ const UrlMonitor = () => {
       </Box>
 
       {/* Url configurations & Recent Results divs */}
-      <Box sx={{ display: "flex", gap: 3 }}>
+      <Box
+        sx={{
+          display: "flex",
+          gap: 3,
+          flexDirection: { xs: "column", lg: "row" },
+        }}
+      >
         <Paper
           sx={{
             border: "1px solid #D1DFFF",
-            p: 2,
+            py: { xs: 1.5, lg: 2 },
+            px: { xs: 0.5, lg: 1 },
             mt: 2,
             borderRadius: 1,
             bgcolor: "#F9FAFF",
-            width: "40%",
+            width: { xs: "100%", lg: "40%" },
             boxShadow: "0px 2.5px 5px rgba(0, 0, 0, 0.1)",
+            display: "flex",
+            flexDirection: "column",
+            // Keep overall paper height stable on larger screens so inner
+            // form/list can grow/scroll without shifting the surrounding layout
+            height: { xs: "auto", md: "545px" },
+            overflow: "hidden",
           }}
         >
           <form onSubmit={handleSubmit(onSubmit)}>
-            <Stack spacing={4} px={1}>
+            <Box
+              sx={{ display: "flex", flexDirection: "column", height: "100%" }}
+            >
               <Box
                 sx={{
+                  px: 1,
                   display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                  flexDirection: "column",
+                  height: "100%",
                 }}
               >
-                <Typography variant="subtitle1">URL Configurations</Typography>
-
-                {urlArray.length > 0 && (
-                  <Button
-                    type="button"
-                    variant="contained"
-                    sx={{ fontSize: "0.9rem", width: "100px" }}
-                    onClick={() => {
-                      reset();
-                      setEditingId(null);
-                      setShowForm(!showForm);
-                    }}
-                  >
-                    {showForm ? "Cancel" : "Add URL"}
-                  </Button>
-                )}
-              </Box>
-
-              {(showForm || urlArray.length === 0) && (
-                <Stack
-                  spacing={1}
+                <Box
                   sx={{
-                    animation:
-                      showForm || urlArray.length === 0
-                        ? "slideDown 0.4s ease-out forwards"
-                        : "slideUp 0.4s ease-out forwards",
-                    overflow: "hidden",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
                   }}
                 >
-                  <Typography variant="body2" color="text.secondary">
-                    {editingId ? "Edit URL" : "Add New URL"}
+                  <Typography variant="subtitle1">
+                    URL Configurations
                   </Typography>
 
-                  <Controller
-                    name="name"
-                    control={control}
-                    render={({ field }) => (
-                      <FloatingLabelInput
-                        {...field}
-                        label="Name"
-                        placeholder="Enter URL Name"
-                        error={!!errors.name}
-                        helperText={errors.name?.message}
-                        sx={{ py: 0, bgcolor: "#FFFFFF" }}
-                      />
-                    )}
-                  />
-
-                  <Controller
-                    name="url"
-                    control={control}
-                    render={({ field }) => (
-                      <FloatingLabelInput
-                        {...field}
-                        label="URL"
-                        placeholder="Enter URL"
-                        error={!!errors.url}
-                        helperText={errors.url?.message}
-                        sx={{ py: 0, bgcolor: "#FFFFFF" }}
-                      />
-                    )}
-                  />
-
-                  <Box sx={{ display: "flex", gap: 2 }}>
-                    <Controller
-                      name="interval"
-                      control={control}
-                      render={({ field }) => (
-                        <FloatingLabelInput
-                          {...field}
-                          type="number"
-                          inputProps={{ min: 0 }}
-                          label="Interval"
-                          placeholder="Enter interval in seconds"
-                          error={!!errors.interval}
-                          helperText={errors.interval?.message}
-                          sx={{ flex: 1, py: 0, bgcolor: "#FFFFFF" }}
-                          value={field.value ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "") field.onChange("");
-                            else if (/^\d+$/.test(v)) {
-                              field.onChange(Math.max(0, Number(v)).toString());
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (
-                              !/[0-9]/.test(e.key) &&
-                              ![
-                                "Backspace",
-                                "Delete",
-                                "ArrowLeft",
-                                "ArrowRight",
-                                "Tab",
-                              ].includes(e.key)
-                            ) {
-                              e.preventDefault();
-                            }
-                          }}
-                        />
-                      )}
-                    />
-
-                    <Controller
-                      name="timeout"
-                      control={control}
-                      render={({ field }) => (
-                        <FloatingLabelInput
-                          {...field}
-                          type="number"
-                          inputProps={{ min: 0 }}
-                          label="Timeout"
-                          placeholder="Enter timeout in seconds"
-                          error={!!errors.timeout}
-                          helperText={errors.timeout?.message}
-                          sx={{ flex: 1, py: 0, bgcolor: "#FFFFFF" }}
-                          value={field.value ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "") field.onChange("");
-                            else if (/^\d+$/.test(v)) {
-                              field.onChange(Math.max(0, Number(v)).toString());
-                            }
-                          }}
-                          onKeyDown={(e) => {
-                            if (
-                              !/[0-9]/.test(e.key) &&
-                              ![
-                                "Backspace",
-                                "Delete",
-                                "ArrowLeft",
-                                "ArrowRight",
-                                "Tab",
-                              ].includes(e.key)
-                            ) {
-                              e.preventDefault();
-                            }
-                          }}
-                        />
-                      )}
-                    />
-                  </Box>
-
-                  <Controller
-                    name="expectedCodes"
-                    control={control}
-                    render={({ field }) => (
-                      <FloatingLabelInput
-                        {...field}
-                        label="Expected Codes"
-                        placeholder="Enter expected codes"
-                        error={!!errors.expectedCodes}
-                        helperText={errors.expectedCodes?.message}
-                        sx={{ py: 0, bgcolor: "#FFFFFF" }}
-                      />
-                    )}
-                  />
-
-                  <Controller
-                    name="enabled"
-                    control={control}
-                    render={({ field }) => (
-                      <Box display="flex" alignItems="center">
-                        <Checkbox
-                          checked={!!field.value}
-                          onChange={(e) => field.onChange(e.target.checked)}
-                        />
-                        <Typography variant="body2" color="text.secondary">
-                          Enabled (in maintenance if unchecked)
-                        </Typography>
-                      </Box>
-                    )}
-                  />
-
-                  <Box display="flex" alignItems="center" gap={1.5}>
+                  {urlArray.length > 0 && (
                     <Button
-                      type="submit"
+                      type="button"
                       variant="contained"
-                      sx={{ fontSize: "0.9rem", px: 3 }}
+                      sx={{ fontSize: "0.9rem", width: "100px" }}
+                      onClick={() => {
+                        reset();
+                        setEditingId(null);
+                        setShowForm(!showForm);
+                      }}
                     >
-                      {editingId ? "Update URL" : "Add URL"}
+                      {showForm ? "Cancel" : "Add URL"}
                     </Button>
+                  )}
+                </Box>
 
-                    <Button
-                      variant="outlined"
-                      sx={{ fontSize: "0.9rem", px: 3 }}
-                      onClick={handleCancelForm}
+                {/* scroll container: keeps form + list together and scrolls when needed */}
+                <Box
+                  sx={{
+                    flex: 1,
+                    overflowY: "auto",
+                    mt: 2,
+                    px: 1,
+                    // cap height relative to viewport on small screens so scrollbar appears
+                    maxHeight: { xs: "60vh", md: "450px" },
+                    WebkitOverflowScrolling: "touch",
+                  }}
+                >
+                  {(showForm || urlArray.length === 0) && (
+                    <Stack
+                      spacing={1}
+                      sx={{
+                        animation:
+                          showForm || urlArray.length === 0
+                            ? "slideDown 0.4s ease-out forwards"
+                            : "slideUp 0.4s ease-out forwards",
+                        overflow: "hidden",
+                      }}
                     >
-                      Cancel
-                    </Button>
-                  </Box>
-                </Stack>
-              )}
+                      <Typography variant="body2" color="text.secondary">
+                        {editingId ? "Edit URL" : "Add New URL"}
+                      </Typography>
 
-              <Stack
-                spacing={2}
-                mt={2}
-                maxHeight={showForm ? 130 : 320}
-                overflow="auto"
-              >
-                {urlArray &&
-                  urlArray?.length > 0 &&
-                  urlArray.map(
-                    ({ id, name, url, interval, timeout, expectedCodes }) => (
+                      <Controller
+                        name="name"
+                        control={control}
+                        render={({ field }) => (
+                          <FloatingLabelInput
+                            {...field}
+                            label="Name"
+                            placeholder="Enter URL Name"
+                            error={!!errors.name}
+                            helperText={errors.name?.message}
+                            sx={{ py: 0, bgcolor: "#FFFFFF" }}
+                          />
+                        )}
+                      />
+
+                      <Controller
+                        name="url"
+                        control={control}
+                        render={({ field }) => (
+                          <FloatingLabelInput
+                            {...field}
+                            label="URL"
+                            placeholder="Enter URL"
+                            error={!!errors.url}
+                            helperText={errors.url?.message}
+                            sx={{ py: 0, bgcolor: "#FFFFFF" }}
+                          />
+                        )}
+                      />
+
                       <Box
-                        key={id}
-                        sx={{
-                          py: 1,
-                          px: 2,
-                          bgcolor: "#FFFFFF",
-                          borderRadius: 1,
-                          border: "1px solid #D1DFFF",
-                          animation: "fadeIn 0.3s ease-out forwards",
-                          transition: "all 0.3s ease",
-                          "&:hover": {
-                            boxShadow: "0px 2px 8px rgba(91, 127, 255, 0.2)",
-                          },
+                        sx={{ 
+                          display: "flex",
+                          gap: 2,
+                          flexDirection: { xs: "column", sm: "row" },
                         }}
                       >
-                        <Box
-                          sx={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "start",
-                          }}
-                        >
-                          <Box>
-                            <Box display="flex" gap={1} alignItems="center">
-                              <Box
-                                sx={{
-                                  width: 16,
-                                  height: 16,
-                                  bgcolor: "#0CB65A",
-                                  borderRadius: "50%",
-                                  mt: 0.5,
-                                }}
-                              />
-                              <Typography variant="subtitle1" fontWeight="bold">
-                                {name}
-                              </Typography>
-                              <Typography variant="subtitle1">{url}</Typography>
-                            </Box>
+                        <Controller
+                          name="interval"
+                          control={control}
+                          render={({ field }) => (
+                            <FloatingLabelInput
+                              {...field}
+                              type="number"
+                              inputProps={{ min: 0 }}
+                              label="Interval"
+                              placeholder="Enter interval in seconds"
+                              error={!!errors.interval}
+                              helperText={errors.interval?.message}
+                              sx={{ flex: 1, py: 0, bgcolor: "#FFFFFF" }}
+                              value={field.value ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "") field.onChange("");
+                                else if (/^\d+$/.test(v)) {
+                                  field.onChange(
+                                    Math.max(0, Number(v)).toString()
+                                  );
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (
+                                  !/[0-9]/.test(e.key) &&
+                                  ![
+                                    "Backspace",
+                                    "Delete",
+                                    "ArrowLeft",
+                                    "ArrowRight",
+                                    "Tab",
+                                  ].includes(e.key)
+                                ) {
+                                  e.preventDefault();
+                                }
+                              }}
+                            />
+                          )}
+                        />
 
-                            <Box display="flex" gap={1}>
-                              <Typography variant="subtitle1">
-                                Expected codes&#58;
-                              </Typography>
-                              {expectedCodes.map((code, idx) => (
-                                <Typography key={idx} variant="subtitle1">
-                                  {code}
-                                  {idx !== expectedCodes.length - 1 && ","}
-                                </Typography>
-                              ))}
-                            </Box>
-                          </Box>
-                          <Box display="flex" gap={1}>
-                            <Typography variant="body2" color="text.secondary">
-                              Interval&#58;{interval}s
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              Timeout&#58;{timeout}s
-                            </Typography>
-                          </Box>
-                        </Box>
-                        <Box
-                          display="flex"
-                          alignItems="center"
-                          gap={1.5}
-                          mt={2}
-                        >
-                          <Button
-                            variant="contained"
-                            sx={{
-                              fontSize: "0.9rem",
-                              px: 3,
-                              py: 0.5,
-                            }}
-                            onClick={() => {
-                              const item: URLObject = {
-                                id,
-                                name,
-                                url,
-                                interval,
-                                timeout,
-                                expectedCodes,
-                              };
-                              handleEditClick(item);
-                            }}
-                          >
-                            Edit
-                          </Button>
+                        <Controller
+                          name="timeout"
+                          control={control}
+                          render={({ field }) => (
+                            <FloatingLabelInput
+                              {...field}
+                              type="number"
+                              inputProps={{ min: 0 }}
+                              label="Timeout"
+                              placeholder="Enter timeout in seconds"
+                              error={!!errors.timeout}
+                              helperText={errors.timeout?.message}
+                              sx={{ flex: 1, py: 0, bgcolor: "#FFFFFF" }}
+                              value={field.value ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "") field.onChange("");
+                                else if (/^\d+$/.test(v)) {
+                                  field.onChange(
+                                    Math.max(0, Number(v)).toString()
+                                  );
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (
+                                  !/[0-9]/.test(e.key) &&
+                                  ![
+                                    "Backspace",
+                                    "Delete",
+                                    "ArrowLeft",
+                                    "ArrowRight",
+                                    "Tab",
+                                  ].includes(e.key)
+                                ) {
+                                  e.preventDefault();
+                                }
+                              }}
+                            />
+                          )}
+                        />
+                      </Box>
 
-                          <Button
-                            variant="contained"
+                      <Controller
+                        name="expectedCodes"
+                        control={control}
+                        render={({ field }) => (
+                          <FloatingLabelInput
+                            {...field}
+                            label="Expected Codes"
+                            placeholder="Enter expected codes"
+                            error={!!errors.expectedCodes}
+                            helperText={errors.expectedCodes?.message}
+                            sx={{ py: 0, bgcolor: "#FFFFFF" }}
+                          />
+                        )}
+                      />
+
+                      <Controller
+                        name="enabled"
+                        control={control}
+                        render={({ field }) => (
+                          <Box display="flex" alignItems="center">
+                            <Checkbox
+                              checked={!!field.value}
+                              onChange={(e) => field.onChange(e.target.checked)}
+                            />
+                            <Typography variant="body2" color="text.secondary">
+                              Enabled (in maintenance if unchecked)
+                            </Typography>
+                          </Box>
+                        )}
+                      />
+
+                      <Box display="flex" alignItems="center" gap={1.5}>
+                        <Button
+                          type="submit"
+                          variant="contained"
+                          sx={{ fontSize: "0.9rem", px: 3 }}
+                        >
+                          {editingId ? "Update URL" : "Add URL"}
+                        </Button>
+
+                        <Button
+                          variant="outlined"
+                          sx={{ fontSize: "0.9rem", px: 3 }}
+                          onClick={handleCancelForm}
+                        >
+                          Cancel
+                        </Button>
+                      </Box>
+                    </Stack>
+                  )}
+
+                  <Stack spacing={2} mt={2}>
+                    {urlArray &&
+                      urlArray?.length > 0 &&
+                      urlArray.map(
+                        ({
+                          id,
+                          name,
+                          url,
+                          interval,
+                          timeout,
+                          expectedCodes,
+                        }) => (
+                          <Box
+                            key={id}
                             sx={{
-                              fontSize: "0.9rem",
-                              px: 3,
-                              py: 0.5,
-                              background: "red",
+                              py: 1,
+                              px: 2,
+                              bgcolor: "#FFFFFF",
+                              borderRadius: 1,
+                              border: "1px solid #D1DFFF",
+                              animation: "fadeIn 0.3s ease-out forwards",
+                              transition: "all 0.3s ease",
                               "&:hover": {
-                                background: "red",
+                                boxShadow:
+                                  "0px 2px 8px rgba(91, 127, 255, 0.2)",
                               },
                             }}
-                            onClick={() => handleDeleteClick(id)}
                           >
-                            Delete
-                          </Button>
-                        </Box>
-                      </Box>
-                    )
-                  )}
-              </Stack>
-            </Stack>
+                            <Box
+                              sx={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "start",
+                                flexDirection: { xs: "column", sm: "row" },
+                                gap: { xs: 1.5, sm: 0 },
+                              }}
+                            >
+                              <Box>
+                                <Box display="flex" gap={1} alignItems="center">
+                                  <Box
+                                    sx={{
+                                      width: 16,
+                                      height: 16,
+                                      bgcolor: "#0CB65A",
+                                      borderRadius: "50%",
+                                      mt: 0.5,
+                                    }}
+                                  />
+                                  <Typography
+                                    variant="subtitle1"
+                                    fontWeight="bold"
+                                  >
+                                    {name}
+                                  </Typography>
+                                  <Typography variant="subtitle1">
+                                    {url}
+                                  </Typography>
+                                </Box>
+
+                                <Box display="flex" gap={1}>
+                                  <Typography variant="subtitle1">
+                                    Expected codes&#58;
+                                  </Typography>
+                                  {expectedCodes.map((code, idx) => (
+                                    <Typography key={idx} variant="subtitle1">
+                                      {code}
+                                      {idx !== expectedCodes.length - 1 && ","}
+                                    </Typography>
+                                  ))}
+                                </Box>
+                              </Box>
+                              <Box
+                                display="flex"
+                                gap={1}
+                                flexWrap="wrap"
+                                justifyContent="end"
+                              >
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                >
+                                  Interval&#58;{interval}s
+                                </Typography>
+                                <Typography
+                                  variant="body2"
+                                  color="text.secondary"
+                                >
+                                  Timeout&#58;{timeout}s
+                                </Typography>
+                              </Box>
+                            </Box>
+                            <Box
+                              display="flex"
+                              alignItems={{ xs: "stretch", sm: "center" }}
+                              gap={1.5}
+                              mt={2}
+                              sx={{
+                                flexDirection: { xs: "column", sm: "row" },
+                                width: "100%",
+                                justifyContent: {
+                                  xs: "flex-start",
+                                  sm: "flex-start",
+                                },
+                              }}
+                            >
+                              <Button
+                                variant="contained"
+                                sx={{
+                                  fontSize: "0.9rem",
+                                  px: 3,
+                                  py: 0.5,
+                                }}
+                                onClick={() => {
+                                  const item: URLObject = {
+                                    id,
+                                    name,
+                                    url,
+                                    interval,
+                                    timeout,
+                                    expectedCodes,
+                                  };
+                                  handleEditClick(item);
+                                }}
+                              >
+                                Edit
+                              </Button>
+
+                              <Button
+                                variant="contained"
+                                sx={{
+                                  fontSize: "0.9rem",
+                                  px: 3,
+                                  py: 0.5,
+                                  background: "red",
+                                  "&:hover": {
+                                    background: "red",
+                                  },
+                                  width: { xs: "100%", sm: "auto" },
+                                }}
+                                onClick={() => handleDeleteClick(id)}
+                              >
+                                Delete
+                              </Button>
+                            </Box>
+                          </Box>
+                        )
+                      )}
+                  </Stack>
+                </Box>
+              </Box>
+            </Box>
           </form>
         </Paper>
 
         <Paper
           sx={{
             border: "1px solid #D1DFFF",
-            p: 2,
+            p: { xs: 1.5, lg: 2 },
             mt: 2,
             borderRadius: 1,
             bgcolor: "#F9FAFF",
-            width: "60%",
+            width: { xs: "100%", lg: "60%" },
             boxShadow: "0px 2.5px 5px rgba(0, 0, 0, 0.1)",
           }}
         >
@@ -844,15 +645,23 @@ const UrlMonitor = () => {
                     sx={{
                       display: "flex",
                       justifyContent: "space-between",
-                      alignItems: "end",
+                      alignItems: { xs: "flex-start", sm: "end" },
+                      flexDirection: { xs: "column", sm: "row" },
                       py: 1,
                       px: 2,
                       bgcolor: "#FFFFFF",
                       borderRadius: 1,
                       border: "1px solid #D1DFFF",
+                      gap: 1,
                     }}
                   >
-                    <Box>
+                    <Box
+                      sx={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 0.5,
+                      }}
+                    >
                       <Box display="flex" gap={1} alignItems="center">
                         <Box
                           sx={{
@@ -870,7 +679,7 @@ const UrlMonitor = () => {
 
                       <Typography variant="subtitle1">{url}</Typography>
 
-                      <Box display="flex" gap={1}>
+                      <Box display="flex" gap={1} flexWrap="wrap">
                         <Typography variant="subtitle1">
                           {statusCode}
                         </Typography>
@@ -880,7 +689,11 @@ const UrlMonitor = () => {
                       </Box>
                     </Box>
 
-                    <Typography variant="body2" color="text.secondary">
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ whiteSpace: "nowrap" }}
+                    >
                       {formatEpoch(date)}
                     </Typography>
                   </Box>
@@ -944,6 +757,7 @@ const UrlMonitor = () => {
           <Box
             sx={{
               display: "flex",
+              flexDirection: "row",
               justifyContent: "space-between",
               alignItems: "center",
             }}
@@ -967,8 +781,11 @@ const UrlMonitor = () => {
             </Box>
 
             {/* URL Dropdown Filter */}
-            <FormControl sx={{ minWidth: 220 }}>
+            <FormControl
+              sx={{ minWidth: { xs: 140, sm: 220 }, width: { xs: "auto" } }}
+            >
               <Select
+                fullWidth
                 value={selectedUrlForChart}
                 onChange={(e) => setSelectedUrlForChart(e.target.value)}
                 sx={{
@@ -990,6 +807,7 @@ const UrlMonitor = () => {
                   "& .MuiOutlinedInput-input": {
                     color: "#0F172A",
                   },
+                  width: "100%",
                 }}
               >
                 <MenuItem value="Jenkins API" sx={{ fontSize: "0.9rem" }}>
@@ -1010,16 +828,18 @@ const UrlMonitor = () => {
             key={selectedUrlForChart}
             sx={{
               width: "100%",
-              height: 380,
+              height: { xs: 260, sm: 320, md: 380 },
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
               bgcolor: "#FFFFFF",
-              borderRadius: "10px",
+              borderRadius: { xs: "8px", md: "10px" },
               border: "1.5px solid #E0E7FF",
-              p: 3,
-              // animation:
-              //   "chartFadeInSlide 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              p: { xs: 2, md: 3 },
+              // animation: {
+              //   xs: "none",
+              //   md: "chartFadeInSlide 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
+              // },
               position: "relative",
               overflow: "hidden",
             }}
@@ -1158,12 +978,14 @@ const UrlMonitor = () => {
                   sx={{
                     display: "flex",
                     justifyContent: "space-between",
-                    alignItems: "center",
-                    p: 2,
+                    alignItems: { xs: "flex-start", md: "center" },
+                    p: { xs: 1.25, md: 2 },
                     bgcolor: "#FFFFFF",
                     borderRadius: 1,
                     border: "1px solid #D1DFFF",
                     borderBottom: "none",
+                    flexDirection: { xs: "column", md: "row" },
+                    gap: { xs: 1.5, md: 0 },
                   }}
                 >
                   <Box
@@ -1171,6 +993,7 @@ const UrlMonitor = () => {
                     gap={1.5}
                     alignItems="flex-start"
                     flex={1}
+                    sx={{ width: { xs: "100%", md: "auto" } }}
                   >
                     <Box
                       sx={{
@@ -1203,7 +1026,16 @@ const UrlMonitor = () => {
                   </Box>
 
                   {/* Edit and Delete Buttons */}
-                  <Box display="flex" gap={1}>
+                  <Box
+                    sx={{
+                      display: "flex",
+                      gap: 1,
+                      mt: { xs: 1, md: 0 },
+                      width: { xs: "100%", md: "auto" },
+                      justifyContent: { xs: "flex-end", md: "flex-start" },
+                      flexWrap: "wrap",
+                    }}
+                  >
                     <Button
                       variant="contained"
                       size="small"
@@ -1216,6 +1048,7 @@ const UrlMonitor = () => {
                             "linear-gradient(90deg, #4B6FEF 0%, #6B8FEF 100%)",
                         },
                         px: 2,
+                        width: { xs: "48%", sm: "auto" },
                       }}
                     >
                       Edit
@@ -1230,6 +1063,7 @@ const UrlMonitor = () => {
                           background: "#b71c1c",
                         },
                         px: 2,
+                        width: { xs: "48%", sm: "auto" },
                       }}
                     >
                       Delete
@@ -1241,9 +1075,13 @@ const UrlMonitor = () => {
                 <Box
                   sx={{
                     display: "grid",
-                    gridTemplateColumns: "repeat(5, 1fr)",
-                    gap: 1,
-                    p: 2,
+                    gridTemplateColumns: {
+                      xs: "repeat(1, 1fr)",
+                      sm: "repeat(2, 1fr)",
+                      md: "repeat(5, 1fr)",
+                    },
+                    gap: { xs: 1, md: 1 },
+                    p: { xs: 1.5, md: 2 },
                     bgcolor: "#FFFFFF",
                     border: "1px solid #D1DFFF",
                     borderTop: "none",
@@ -1383,7 +1221,7 @@ const UrlMonitor = () => {
                 {/* Recent Checks Section - Inside same card */}
                 <Box
                   sx={{
-                    p: 2,
+                    p: { xs: 1.5, md: 2 },
                     bgcolor: "#FFFFFF",
                     borderRadius: "0 0 8px 8px",
                     border: "1px solid #D1DFFF",
@@ -1405,10 +1243,12 @@ const UrlMonitor = () => {
                         sx={{
                           display: "flex",
                           justifyContent: "space-between",
-                          alignItems: "center",
+                          alignItems: { xs: "flex-start", sm: "center" },
+                          flexDirection: { xs: "column", sm: "row" },
                           p: 1,
                           bgcolor: "#F5F7FB",
                           borderRadius: 0.5,
+                          gap: 1,
                         }}
                       >
                         <Box
@@ -1434,14 +1274,14 @@ const UrlMonitor = () => {
                             }}
                           />
                           <Typography variant="caption" fontWeight="500">
-                            {check.statusCode} {check.url}
-                            {check.responseTime}ms
+                            {check.statusCode} {check.url} {check.responseTime}
+                            ms
                           </Typography>
                         </Box>
                         <Typography
                           variant="caption"
                           color="text.secondary"
-                          sx={{ ml: 2, whiteSpace: "nowrap" }}
+                          sx={{ ml: { xs: 0, sm: 2 }, whiteSpace: "nowrap" }}
                         >
                           {formatEpoch(check.date)}
                         </Typography>
