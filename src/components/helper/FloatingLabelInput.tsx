@@ -45,6 +45,20 @@ const FloatingLabelInput = React.forwardRef<
         "&.Mui-error fieldset": {
           borderColor: "#d32f2f",
         },
+
+        "& input:-webkit-autofill": {
+          WebkitBoxShadow: "0 0 0 1000px #FFFFFF inset !important",
+          WebkitTextFillColor: "#000000 !important",
+          caretColor: "#000000 !important",
+        },
+
+        "& input:-webkit-autofill:hover": {
+          WebkitBoxShadow: "0 0 0 1000px #FFFFFF inset !important",
+        },
+
+        "& input:-webkit-autofill:focus": {
+          WebkitBoxShadow: "0 0 0 1000px #FFFFFF inset !important",
+        },
       },
 
       "& .MuiFormHelperText-root": {
