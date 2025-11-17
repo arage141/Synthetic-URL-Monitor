@@ -1,9 +1,7 @@
 import {
   Box,
   Button,
-  Checkbox,
   Paper,
-  Stack,
   Typography,
   Dialog,
   DialogTitle,
@@ -11,35 +9,25 @@ import {
   DialogActions,
   CardContent,
   Card,
-  Select,
-  MenuItem,
-  FormControl,
 } from "@mui/material";
-import FloatingLabelInput from "../helper/FloatingLabelInput";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useState } from "react";
-import {
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Area,
-  AreaChart,
-} from "recharts";
+import { useState, useRef, useMemo } from "react";
 import {
   animationStyles,
   chartData,
   formatEpoch,
   formSchema,
-  mockApiResponse,
-  monitoringStatusData,
-  urlStatsData,
   type FormType,
   type StatCardProps,
   type URLObject,
+  type CheckResult,
+  generateMockData,
 } from "../helper";
+import AddUrlForm from "../helper/subComponents/AddUrlForm";
+import MonitoringStatus from "../helper/subComponents/MonitoringStatus";
+import TrendsChart from "../helper/subComponents/TrendsChart";
+import RecentResults from "../helper/subComponents/RecentResults";
 
 // Inject styles
 if (typeof document !== "undefined") {
@@ -54,7 +42,7 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, color }) => {
       sx={{
         background: color ?? "linear-gradient(135deg, #94A3B8, #64748B)",
         color: "white",
-        minWidth: { xs: "100%", sm: 200, md: 250 },
+        minWidth: { xs: "100%", sm: 200, md: 250, xl: 280 },
         width: { xs: "100%", sm: "auto" },
         borderRadius: 1,
         padding: 0,
@@ -75,14 +63,81 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, color }) => {
   );
 };
 
+const computeUrlStats = (urls: URLObject[]) => {
+  const stats = {
+    totalUrls: urls.length,
+    healthy: 0,
+    failing: 0,
+    totalChecks: 0,
+    avgResponseTime: 0,
+    successRate: 0,
+    lastCheck: 0,
+  };
+
+  let responseSum = 0;
+  let responseCount = 0;
+  let successCount = 0;
+  let totalEvents = 0;
+  let latestCheck = 0;
+
+  urls.forEach((url) => {
+    if (url.status === "HEALTHY") {
+      stats.healthy += 1;
+    } else if (url.status === "FAILING") {
+      stats.failing += 1;
+    }
+
+    const history = url.checkHistory || [];
+    const historyCount = history.length;
+    stats.totalChecks += url.totalChecks ?? historyCount;
+
+    if (typeof url.avgResponseTime === "number") {
+      responseSum += url.avgResponseTime;
+      responseCount += 1;
+    }
+
+    history.forEach((check) => {
+      totalEvents += 1;
+      const isSuccess =
+        url.expectedCodes && url.expectedCodes.length > 0
+          ? url.expectedCodes.includes(check.statusCode)
+          : check.statusCode >= 200 && check.statusCode < 300;
+
+      if (isSuccess) {
+        successCount += 1;
+      }
+
+      const checkDate = Number(check.date);
+      if (!Number.isNaN(checkDate)) {
+        latestCheck = Math.max(latestCheck, checkDate);
+      }
+    });
+  });
+
+  stats.avgResponseTime = responseCount
+    ? Math.round(responseSum / responseCount)
+    : 0;
+
+  stats.successRate = totalEvents
+    ? Number(((successCount / totalEvents) * 100).toFixed(2))
+    : 0;
+
+  stats.lastCheck = latestCheck;
+
+  return stats;
+};
+
 const UrlMonitor = () => {
-  const [urlArray, setUrlArray] = useState<URLObject[]>([]);
+  const [urlArray, setUrlArray] = useState<URLObject[]>(generateMockData());
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [selectedUrlForChart, setSelectedUrlForChart] =
     useState<string>("Jenkins API");
+  const [checkingUrls, setCheckingUrls] = useState<Set<string>>(new Set());
+  const formRef = useRef<HTMLDivElement>(null);
+  const urlStats = useMemo(() => computeUrlStats(urlArray), [urlArray]);
 
   const {
     control,
@@ -127,7 +182,7 @@ const UrlMonitor = () => {
       setEditingId(null);
     } else {
       // Add mode
-      const payload = {
+      const payload: URLObject = {
         ...data,
         id: crypto.randomUUID(),
         interval: Number(data.interval),
@@ -137,6 +192,12 @@ const UrlMonitor = () => {
             ?.split(",")
             .map((v) => Number(v.trim()))
             .filter((n) => !isNaN(n)) || [],
+        checkHistory: [],
+        totalChecks: 0,
+        avgResponseTime: 0,
+        successRate: 0,
+        status: "FAILING",
+        lastCode: 0,
       };
       setUrlArray((prev) => [...prev, payload]);
     }
@@ -174,6 +235,165 @@ const UrlMonitor = () => {
     setShowForm(false);
   };
 
+  // Simulate URL check (in real app, this would be an API call)
+  const checkUrl = async (
+    url: string,
+    timeout: number
+  ): Promise<CheckResult> => {
+    const startTime = Date.now();
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout * 1000);
+
+      await fetch(url, {
+        method: "GET",
+        signal: controller.signal,
+        mode: "no-cors", // For CORS issues, we'll simulate
+      });
+
+      clearTimeout(timeoutId);
+      const responseTime = Date.now() - startTime;
+
+      // Simulate response since no-cors doesn't give us status
+      const statusCode =
+        Math.random() > 0.1 ? 200 : Math.random() > 0.5 ? 500 : 404;
+
+      return {
+        id: crypto.randomUUID(),
+        date: Date.now().toString(),
+        statusCode,
+        responseTime: Math.min(responseTime, timeout * 1000),
+      };
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      return {
+        id: crypto.randomUUID(),
+        date: Date.now().toString(),
+        statusCode: 0, // Network error
+        responseTime: Math.min(responseTime, timeout * 1000),
+      };
+    }
+  };
+
+  // Calculate metrics from check history
+  const calculateMetrics = (
+    checkHistory: CheckResult[],
+    expectedCodes: number[]
+  ): {
+    avgResponseTime: number;
+    successRate: number;
+    status: "HEALTHY" | "FAILING" | "DEGRADED";
+    lastCode: number;
+  } => {
+    if (checkHistory.length === 0) {
+      return {
+        avgResponseTime: 0,
+        successRate: 0,
+        status: "FAILING",
+        lastCode: 0,
+      };
+    }
+
+    const totalChecks = checkHistory.length;
+    const successfulChecks = checkHistory.filter(
+      (check) =>
+        expectedCodes.includes(check.statusCode) ||
+        (check.statusCode >= 200 && check.statusCode < 300)
+    ).length;
+
+    const avgResponseTime = Math.round(
+      checkHistory.reduce((sum, check) => sum + check.responseTime, 0) /
+        totalChecks
+    );
+
+    const successRate = Math.round((successfulChecks / totalChecks) * 100);
+
+    const lastCheck = checkHistory[checkHistory.length - 1];
+    const lastCode = lastCheck.statusCode;
+
+    let status: "HEALTHY" | "FAILING" | "DEGRADED";
+    if (successRate >= 95) {
+      status = "HEALTHY";
+    } else if (successRate >= 70) {
+      status = "DEGRADED";
+    } else {
+      status = "FAILING";
+    }
+
+    return {
+      avgResponseTime,
+      successRate,
+      status,
+      lastCode,
+    };
+  };
+
+  // Check Now functionality
+  const handleCheckNow = async (urlId: string) => {
+    const urlItem = urlArray.find((item) => item.id === urlId);
+    if (!urlItem) return;
+
+    setCheckingUrls((prev) => new Set(prev).add(urlId));
+
+    try {
+      const checkResult = await checkUrl(urlItem.url, urlItem.timeout);
+
+      setUrlArray((prev) =>
+        prev.map((item) => {
+          if (item.id === urlId) {
+            const updatedHistory = [
+              ...(item.checkHistory || []),
+              checkResult,
+            ].slice(-100); // Keep last 100 checks
+            const metrics = calculateMetrics(
+              updatedHistory,
+              item.expectedCodes
+            );
+
+            return {
+              ...item,
+              checkHistory: updatedHistory,
+              totalChecks: updatedHistory.length,
+              ...metrics,
+            };
+          }
+          return item;
+        })
+      );
+    } catch (error) {
+      console.error("Error checking URL:", error);
+    } finally {
+      setCheckingUrls((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(urlId);
+        return newSet;
+      });
+    }
+  };
+
+  // Check all URLs
+  const handleCheckAll = async () => {
+    const enabledUrls = urlArray.filter((item) => item.enabled !== false);
+    for (const urlItem of enabledUrls) {
+      await handleCheckNow(urlItem.id);
+    }
+  };
+
+  // Smooth scroll to form
+  const scrollToForm = () => {
+    if (formRef.current) {
+      formRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  // Handle edit from URL Monitoring Status
+  const handleEditFromStatus = (item: URLObject) => {
+    handleEditClick(item);
+    setTimeout(() => {
+      scrollToForm();
+    }, 100);
+  };
+
   return (
     <Box sx={{ py: 3, px: { xs: 2, sm: 4, md: 8, lg: 12 } }}>
       <Box>
@@ -185,6 +405,7 @@ const UrlMonitor = () => {
 
       {/* Url configurations & Recent Results divs */}
       <Box
+        ref={formRef}
         sx={{
           display: "flex",
           gap: 3,
@@ -209,395 +430,21 @@ const UrlMonitor = () => {
             overflow: "hidden",
           }}
         >
-          <form onSubmit={handleSubmit(onSubmit)}>
-            <Box
-              sx={{ display: "flex", flexDirection: "column", height: "100%" }}
-            >
-              <Box
-                sx={{
-                  px: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  height: "100%",
-                }}
-              >
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <Typography variant="subtitle1">
-                    URL Configurations
-                  </Typography>
-
-                  {urlArray.length > 0 && (
-                    <Button
-                      type="button"
-                      variant="contained"
-                      sx={{ fontSize: "0.9rem", width: "100px" }}
-                      onClick={() => {
-                        reset();
-                        setEditingId(null);
-                        setShowForm(!showForm);
-                      }}
-                    >
-                      {showForm ? "Cancel" : "Add URL"}
-                    </Button>
-                  )}
-                </Box>
-
-                {/* scroll container: keeps form + list together and scrolls when needed */}
-                <Box
-                  sx={{
-                    flex: 1,
-                    overflowY: "auto",
-                    mt: 2,
-                    px: 1,
-                    // cap height relative to viewport on small screens so scrollbar appears
-                    maxHeight: { xs: "60vh", md: "450px" },
-                    WebkitOverflowScrolling: "touch",
-                  }}
-                >
-                  {(showForm || urlArray.length === 0) && (
-                    <Stack
-                      spacing={1}
-                      sx={{
-                        animation:
-                          showForm || urlArray.length === 0
-                            ? "slideDown 0.4s ease-out forwards"
-                            : "slideUp 0.4s ease-out forwards",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <Typography variant="body2" color="text.secondary">
-                        {editingId ? "Edit URL" : "Add New URL"}
-                      </Typography>
-
-                      <Controller
-                        name="name"
-                        control={control}
-                        render={({ field }) => (
-                          <FloatingLabelInput
-                            {...field}
-                            label="Name"
-                            placeholder="Enter URL Name"
-                            error={!!errors.name}
-                            helperText={errors.name?.message}
-                            sx={{ py: 0, bgcolor: "#FFFFFF" }}
-                          />
-                        )}
-                      />
-
-                      <Controller
-                        name="url"
-                        control={control}
-                        render={({ field }) => (
-                          <FloatingLabelInput
-                            {...field}
-                            label="URL"
-                            placeholder="Enter URL"
-                            error={!!errors.url}
-                            helperText={errors.url?.message}
-                            sx={{ py: 0, bgcolor: "#FFFFFF" }}
-                          />
-                        )}
-                      />
-
-                      <Box
-                        sx={{ 
-                          display: "flex",
-                          gap: 2,
-                          flexDirection: { xs: "column", sm: "row" },
-                        }}
-                      >
-                        <Controller
-                          name="interval"
-                          control={control}
-                          render={({ field }) => (
-                            <FloatingLabelInput
-                              {...field}
-                              type="number"
-                              inputProps={{ min: 0 }}
-                              label="Interval"
-                              placeholder="Enter interval in seconds"
-                              error={!!errors.interval}
-                              helperText={errors.interval?.message}
-                              sx={{ flex: 1, py: 0, bgcolor: "#FFFFFF" }}
-                              value={field.value ?? ""}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (v === "") field.onChange("");
-                                else if (/^\d+$/.test(v)) {
-                                  field.onChange(
-                                    Math.max(0, Number(v)).toString()
-                                  );
-                                }
-                              }}
-                              onKeyDown={(e) => {
-                                if (
-                                  !/[0-9]/.test(e.key) &&
-                                  ![
-                                    "Backspace",
-                                    "Delete",
-                                    "ArrowLeft",
-                                    "ArrowRight",
-                                    "Tab",
-                                  ].includes(e.key)
-                                ) {
-                                  e.preventDefault();
-                                }
-                              }}
-                            />
-                          )}
-                        />
-
-                        <Controller
-                          name="timeout"
-                          control={control}
-                          render={({ field }) => (
-                            <FloatingLabelInput
-                              {...field}
-                              type="number"
-                              inputProps={{ min: 0 }}
-                              label="Timeout"
-                              placeholder="Enter timeout in seconds"
-                              error={!!errors.timeout}
-                              helperText={errors.timeout?.message}
-                              sx={{ flex: 1, py: 0, bgcolor: "#FFFFFF" }}
-                              value={field.value ?? ""}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                if (v === "") field.onChange("");
-                                else if (/^\d+$/.test(v)) {
-                                  field.onChange(
-                                    Math.max(0, Number(v)).toString()
-                                  );
-                                }
-                              }}
-                              onKeyDown={(e) => {
-                                if (
-                                  !/[0-9]/.test(e.key) &&
-                                  ![
-                                    "Backspace",
-                                    "Delete",
-                                    "ArrowLeft",
-                                    "ArrowRight",
-                                    "Tab",
-                                  ].includes(e.key)
-                                ) {
-                                  e.preventDefault();
-                                }
-                              }}
-                            />
-                          )}
-                        />
-                      </Box>
-
-                      <Controller
-                        name="expectedCodes"
-                        control={control}
-                        render={({ field }) => (
-                          <FloatingLabelInput
-                            {...field}
-                            label="Expected Codes"
-                            placeholder="Enter expected codes"
-                            error={!!errors.expectedCodes}
-                            helperText={errors.expectedCodes?.message}
-                            sx={{ py: 0, bgcolor: "#FFFFFF" }}
-                          />
-                        )}
-                      />
-
-                      <Controller
-                        name="enabled"
-                        control={control}
-                        render={({ field }) => (
-                          <Box display="flex" alignItems="center">
-                            <Checkbox
-                              checked={!!field.value}
-                              onChange={(e) => field.onChange(e.target.checked)}
-                            />
-                            <Typography variant="body2" color="text.secondary">
-                              Enabled (in maintenance if unchecked)
-                            </Typography>
-                          </Box>
-                        )}
-                      />
-
-                      <Box display="flex" alignItems="center" gap={1.5}>
-                        <Button
-                          type="submit"
-                          variant="contained"
-                          sx={{ fontSize: "0.9rem", px: 3 }}
-                        >
-                          {editingId ? "Update URL" : "Add URL"}
-                        </Button>
-
-                        <Button
-                          variant="outlined"
-                          sx={{ fontSize: "0.9rem", px: 3 }}
-                          onClick={handleCancelForm}
-                        >
-                          Cancel
-                        </Button>
-                      </Box>
-                    </Stack>
-                  )}
-
-                  <Stack spacing={2} mt={2}>
-                    {urlArray &&
-                      urlArray?.length > 0 &&
-                      urlArray.map(
-                        ({
-                          id,
-                          name,
-                          url,
-                          interval,
-                          timeout,
-                          expectedCodes,
-                        }) => (
-                          <Box
-                            key={id}
-                            sx={{
-                              py: 1,
-                              px: 2,
-                              bgcolor: "#FFFFFF",
-                              borderRadius: 1,
-                              border: "1px solid #D1DFFF",
-                              animation: "fadeIn 0.3s ease-out forwards",
-                              transition: "all 0.3s ease",
-                              "&:hover": {
-                                boxShadow:
-                                  "0px 2px 8px rgba(91, 127, 255, 0.2)",
-                              },
-                            }}
-                          >
-                            <Box
-                              sx={{
-                                display: "flex",
-                                justifyContent: "space-between",
-                                alignItems: "start",
-                                flexDirection: { xs: "column", sm: "row" },
-                                gap: { xs: 1.5, sm: 0 },
-                              }}
-                            >
-                              <Box>
-                                <Box display="flex" gap={1} alignItems="center">
-                                  <Box
-                                    sx={{
-                                      width: 16,
-                                      height: 16,
-                                      bgcolor: "#0CB65A",
-                                      borderRadius: "50%",
-                                      mt: 0.5,
-                                    }}
-                                  />
-                                  <Typography
-                                    variant="subtitle1"
-                                    fontWeight="bold"
-                                  >
-                                    {name}
-                                  </Typography>
-                                  <Typography variant="subtitle1">
-                                    {url}
-                                  </Typography>
-                                </Box>
-
-                                <Box display="flex" gap={1}>
-                                  <Typography variant="subtitle1">
-                                    Expected codes&#58;
-                                  </Typography>
-                                  {expectedCodes.map((code, idx) => (
-                                    <Typography key={idx} variant="subtitle1">
-                                      {code}
-                                      {idx !== expectedCodes.length - 1 && ","}
-                                    </Typography>
-                                  ))}
-                                </Box>
-                              </Box>
-                              <Box
-                                display="flex"
-                                gap={1}
-                                flexWrap="wrap"
-                                justifyContent="end"
-                              >
-                                <Typography
-                                  variant="body2"
-                                  color="text.secondary"
-                                >
-                                  Interval&#58;{interval}s
-                                </Typography>
-                                <Typography
-                                  variant="body2"
-                                  color="text.secondary"
-                                >
-                                  Timeout&#58;{timeout}s
-                                </Typography>
-                              </Box>
-                            </Box>
-                            <Box
-                              display="flex"
-                              alignItems={{ xs: "stretch", sm: "center" }}
-                              gap={1.5}
-                              mt={2}
-                              sx={{
-                                flexDirection: { xs: "column", sm: "row" },
-                                width: "100%",
-                                justifyContent: {
-                                  xs: "flex-start",
-                                  sm: "flex-start",
-                                },
-                              }}
-                            >
-                              <Button
-                                variant="contained"
-                                sx={{
-                                  fontSize: "0.9rem",
-                                  px: 3,
-                                  py: 0.5,
-                                }}
-                                onClick={() => {
-                                  const item: URLObject = {
-                                    id,
-                                    name,
-                                    url,
-                                    interval,
-                                    timeout,
-                                    expectedCodes,
-                                  };
-                                  handleEditClick(item);
-                                }}
-                              >
-                                Edit
-                              </Button>
-
-                              <Button
-                                variant="contained"
-                                sx={{
-                                  fontSize: "0.9rem",
-                                  px: 3,
-                                  py: 0.5,
-                                  background: "red",
-                                  "&:hover": {
-                                    background: "red",
-                                  },
-                                  width: { xs: "100%", sm: "auto" },
-                                }}
-                                onClick={() => handleDeleteClick(id)}
-                              >
-                                Delete
-                              </Button>
-                            </Box>
-                          </Box>
-                        )
-                      )}
-                  </Stack>
-                </Box>
-              </Box>
-            </Box>
-          </form>
+          <AddUrlForm
+            handleSubmit={handleSubmit}
+            onSubmit={onSubmit}
+            urlArray={urlArray}
+            reset={reset}
+            setEditingId={setEditingId}
+            setShowForm={setShowForm}
+            showForm={showForm}
+            editingId={editingId}
+            control={control}
+            errors={errors}
+            handleCancelForm={handleCancelForm}
+            handleEditClick={handleEditClick}
+            handleDeleteClick={handleDeleteClick}
+          />
         </Paper>
 
         <Paper
@@ -611,107 +458,26 @@ const UrlMonitor = () => {
             boxShadow: "0px 2.5px 5px rgba(0, 0, 0, 0.1)",
           }}
         >
-          <Stack spacing={4} px={1}>
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-            >
-              <Typography variant="subtitle1">Recent Results</Typography>
-              <Button
-                variant="contained"
-                sx={{
-                  fontSize: "0.9rem",
-                  width: "120px",
-                  background:
-                    "linear-gradient(90deg, #0CB65A 0%, #4ADE80 100%)",
-                  "&:hover": {
-                    background:
-                      "linear-gradient(90deg, #0AA84F 0%, #3FD370 100%)",
-                  },
-                }}
-              >
-                Check Now
-              </Button>
-            </Box>
-
-            <Stack spacing={2}>
-              {mockApiResponse.map(
-                ({ id, name, url, date, statusCode, responseTime }) => (
-                  <Box
-                    key={id}
-                    sx={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: { xs: "flex-start", sm: "end" },
-                      flexDirection: { xs: "column", sm: "row" },
-                      py: 1,
-                      px: 2,
-                      bgcolor: "#FFFFFF",
-                      borderRadius: 1,
-                      border: "1px solid #D1DFFF",
-                      gap: 1,
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 0.5,
-                      }}
-                    >
-                      <Box display="flex" gap={1} alignItems="center">
-                        <Box
-                          sx={{
-                            width: 16,
-                            height: 16,
-                            bgcolor: "#0CB65A",
-                            borderRadius: "50%",
-                            mt: 0.5,
-                          }}
-                        />
-                        <Typography variant="subtitle1" fontWeight="bold">
-                          {name}
-                        </Typography>
-                      </Box>
-
-                      <Typography variant="subtitle1">{url}</Typography>
-
-                      <Box display="flex" gap={1} flexWrap="wrap">
-                        <Typography variant="subtitle1">
-                          {statusCode}
-                        </Typography>
-                        <Typography variant="subtitle1">
-                          {responseTime}ms
-                        </Typography>
-                      </Box>
-                    </Box>
-
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ whiteSpace: "nowrap" }}
-                    >
-                      {formatEpoch(date)}
-                    </Typography>
-                  </Box>
-                )
-              )}
-            </Stack>
-          </Stack>
+          <RecentResults
+            urlArray={urlArray}
+            handleCheckAll={handleCheckAll}
+            checkingUrls={checkingUrls}
+          />
         </Paper>
       </Box>
 
       {/* Url Stats Cards */}
       <Box display="flex" flexWrap="wrap" gap={2} mt={4}>
-        {Object.entries(urlStatsData).map(([key, value]) => {
+        {Object.entries(urlStats).map(([key, value]) => {
           const formattedValue =
             key === "successRate"
               ? `${Number(value).toFixed(2)}%`
+              : key === "avgResponseTime"
+              ? `${Number(value)}ms`
               : key === "lastCheck"
-              ? formatEpoch(String(value))
+              ? Number(value)
+                ? formatEpoch(String(value))
+                : "No checks yet"
               : value;
 
           const gradients: Record<string, string> = {
@@ -752,178 +518,11 @@ const UrlMonitor = () => {
           boxShadow: "0px 2.5px 5px rgba(0, 0, 0, 0.1)",
         }}
       >
-        <Stack spacing={2}>
-          {/* Header with Dropdown Filter */}
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <Box display="flex" alignItems="center" gap={1}>
-              <Box
-                sx={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: "50%",
-                  background: "linear-gradient(135deg, #5B7FFF, #7B9FFF)",
-                }}
-              />
-              <Typography
-                variant="subtitle1"
-                fontWeight="bold"
-                sx={{ color: "#0F172A", letterSpacing: "0.3px" }}
-              >
-                Daily Response Time Trends
-              </Typography>
-            </Box>
-
-            {/* URL Dropdown Filter */}
-            <FormControl
-              sx={{ minWidth: { xs: 140, sm: 220 }, width: { xs: "auto" } }}
-            >
-              <Select
-                fullWidth
-                value={selectedUrlForChart}
-                onChange={(e) => setSelectedUrlForChart(e.target.value)}
-                sx={{
-                  bgcolor: "#FFFFFF",
-                  border: "1px solid #D1DFFF",
-                  borderRadius: "8px",
-                  fontSize: "0.9rem",
-                  fontWeight: 500,
-                  transition: "all 0.3s ease",
-                  "& .MuiOutlinedInput-notchedOutline": {
-                    borderColor: "#D1DFFF",
-                  },
-                  "&:hover .MuiOutlinedInput-notchedOutline": {
-                    borderColor: "#5B7FFF",
-                  },
-                  "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                    borderColor: "#5B7FFF",
-                  },
-                  "& .MuiOutlinedInput-input": {
-                    color: "#0F172A",
-                  },
-                  width: "100%",
-                }}
-              >
-                <MenuItem value="Jenkins API" sx={{ fontSize: "0.9rem" }}>
-                  Jenkins API
-                </MenuItem>
-                <MenuItem value="Backend Service" sx={{ fontSize: "0.9rem" }}>
-                  Backend Service
-                </MenuItem>
-                <MenuItem value="Frontend Server" sx={{ fontSize: "0.9rem" }}>
-                  Frontend Server
-                </MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
-
-          {/* Chart Container with Animation */}
-          <Box
-            key={selectedUrlForChart}
-            sx={{
-              width: "100%",
-              height: { xs: 260, sm: 320, md: 380 },
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              bgcolor: "#FFFFFF",
-              borderRadius: { xs: "8px", md: "10px" },
-              border: "1.5px solid #E0E7FF",
-              p: { xs: 2, md: 3 },
-              // animation: {
-              //   xs: "none",
-              //   md: "chartFadeInSlide 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
-              // },
-              position: "relative",
-              overflow: "hidden",
-            }}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={chartData}
-                margin={{ top: 10, right: 20, left: 1.5, bottom: 0 }}
-              >
-                <defs>
-                  <linearGradient id="colorTrend" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#5B7FFF" stopOpacity={0.9} />
-                    <stop offset="50%" stopColor="#7B9FFF" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#A5C4FF" stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid
-                  strokeDasharray="4 4"
-                  stroke="#E8EFFF"
-                  vertical={false}
-                  strokeOpacity={0.6}
-                />
-                <XAxis
-                  dataKey="time"
-                  stroke="#94A3B8"
-                  style={{ fontSize: "0.85rem", fontWeight: 500 }}
-                  tick={{ fill: "#64748B" }}
-                />
-                <YAxis
-                  stroke="#94A3B8"
-                  style={{ fontSize: "0.85rem", fontWeight: 500 }}
-                  tick={{ fill: "#64748B" }}
-                  label={{
-                    value: "Response Time (ms)",
-                    angle: -90,
-                    position: "insideLeft",
-                    style: { textAnchor: "middle", fill: "#64748B" },
-                  }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#FFFFFF",
-                    border: "2px solid #5B7FFF",
-                    borderRadius: "10px",
-                    boxShadow: "0px 8px 24px rgba(91, 127, 255, 0.25)",
-                    padding: "12px 16px",
-                  }}
-                  labelStyle={{ color: "#0F172A", fontWeight: 600 }}
-                  cursor={{
-                    stroke: "#5B7FFF",
-                    strokeWidth: 2.5,
-                    opacity: 0.8,
-                  }}
-                  formatter={(value: number) => [`${value}ms`, "Response Time"]}
-                  wrapperStyle={{
-                    outline: "none",
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey={selectedUrlForChart}
-                  stroke="#5B7FFF"
-                  strokeWidth={3}
-                  fillOpacity={1}
-                  fill="url(#colorTrend)"
-                  dot={{
-                    fill: "#5B7FFF",
-                    r: 5,
-                    strokeWidth: 2,
-                    stroke: "#FFFFFF",
-                  }}
-                  activeDot={{
-                    fill: "#5B7FFF",
-                    r: 8,
-                    strokeWidth: 3,
-                    stroke: "#FFFFFF",
-                  }}
-                  animationDuration={600}
-                  animationEasing="ease-in-out"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </Box>
-        </Stack>
+        <TrendsChart
+          selectedUrlForChart={selectedUrlForChart}
+          setSelectedUrlForChart={setSelectedUrlForChart}
+          chartData={chartData}
+        />
       </Paper>
 
       {/* URL Monitoring Status Section */}
@@ -937,362 +536,13 @@ const UrlMonitor = () => {
           boxShadow: "0px 2.5px 5px rgba(0, 0, 0, 0.1)",
         }}
       >
-        <Stack spacing={2}>
-          {/* Main Header */}
-          <Box
-            sx={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              pb: 2,
-              borderBottom: "1px solid #D1DFFF",
-            }}
-          >
-            <Typography variant="subtitle1" fontWeight="bold">
-              URL Monitoring Status
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {monitoringStatusData.length} URLs Monitored
-            </Typography>
-          </Box>
-
-          {/* Single URL Card with everything inside */}
-          {monitoringStatusData.map((item) => {
-            const getStatusColor = (status: string) => {
-              switch (status) {
-                case "HEALTHY":
-                  return "#0CB65A";
-                case "DEGRADED":
-                  return "#FFA500";
-                case "FAILING":
-                  return "#d32f2f";
-                default:
-                  return "#64748B";
-              }
-            };
-
-            return (
-              <Box key={item.id}>
-                {/* URL Header Row with Title and Buttons */}
-                <Box
-                  sx={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: { xs: "flex-start", md: "center" },
-                    p: { xs: 1.25, md: 2 },
-                    bgcolor: "#FFFFFF",
-                    borderRadius: 1,
-                    border: "1px solid #D1DFFF",
-                    borderBottom: "none",
-                    flexDirection: { xs: "column", md: "row" },
-                    gap: { xs: 1.5, md: 0 },
-                  }}
-                >
-                  <Box
-                    display="flex"
-                    gap={1.5}
-                    alignItems="flex-start"
-                    flex={1}
-                    sx={{ width: { xs: "100%", md: "auto" } }}
-                  >
-                    <Box
-                      sx={{
-                        width: 14,
-                        height: 14,
-                        bgcolor: getStatusColor(item.status),
-                        borderRadius: "50%",
-                        mt: 0.25,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <Box>
-                      <Typography variant="subtitle2" fontWeight="bold">
-                        {item.name}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        color="text.secondary"
-                        sx={{
-                          display: "block",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          maxWidth: "500px",
-                        }}
-                      >
-                        {item.url}
-                      </Typography>
-                    </Box>
-                  </Box>
-
-                  {/* Edit and Delete Buttons */}
-                  <Box
-                    sx={{
-                      display: "flex",
-                      gap: 1,
-                      mt: { xs: 1, md: 0 },
-                      width: { xs: "100%", md: "auto" },
-                      justifyContent: { xs: "flex-end", md: "flex-start" },
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <Button
-                      variant="contained"
-                      size="small"
-                      sx={{
-                        fontSize: "0.75rem",
-                        background:
-                          "linear-gradient(90deg, #5B7FFF 0%, #7B9FFF 100%)",
-                        "&:hover": {
-                          background:
-                            "linear-gradient(90deg, #4B6FEF 0%, #6B8FEF 100%)",
-                        },
-                        px: 2,
-                        width: { xs: "48%", sm: "auto" },
-                      }}
-                    >
-                      Edit
-                    </Button>
-                    <Button
-                      variant="contained"
-                      size="small"
-                      sx={{
-                        fontSize: "0.75rem",
-                        background: "#d32f2f",
-                        "&:hover": {
-                          background: "#b71c1c",
-                        },
-                        px: 2,
-                        width: { xs: "48%", sm: "auto" },
-                      }}
-                    >
-                      Delete
-                    </Button>
-                  </Box>
-                </Box>
-
-                {/* Stats Grid - 5 columns in one row */}
-                <Box
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: {
-                      xs: "repeat(1, 1fr)",
-                      sm: "repeat(2, 1fr)",
-                      md: "repeat(5, 1fr)",
-                    },
-                    gap: { xs: 1, md: 1 },
-                    p: { xs: 1.5, md: 2 },
-                    bgcolor: "#FFFFFF",
-                    border: "1px solid #D1DFFF",
-                    borderTop: "none",
-                    borderBottom: "none",
-                  }}
-                >
-                  {/* AVG RESPONSE */}
-                  <Box
-                    sx={{
-                      p: 1.5,
-                      bgcolor: "#F5F7FB",
-                      borderRadius: 0.75,
-                      border: "1px solid #E0E7FF",
-                      textAlign: "center",
-                    }}
-                  >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", mb: 0.75, fontSize: "0.7rem" }}
-                    >
-                      AVG RESPONSE
-                    </Typography>
-                    <Typography variant="body2" fontWeight="bold">
-                      {item.avgResponseTime}ms
-                    </Typography>
-                  </Box>
-
-                  {/* SUCCESS RATE */}
-                  <Box
-                    sx={{
-                      p: 1.5,
-                      bgcolor: "#F5F7FB",
-                      borderRadius: 0.75,
-                      border: "1px solid #E0E7FF",
-                      textAlign: "center",
-                    }}
-                  >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", mb: 0.75, fontSize: "0.7rem" }}
-                    >
-                      SUCCESS RATE
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      fontWeight="bold"
-                      sx={{ color: "#0CB65A" }}
-                    >
-                      {item.successRate}%
-                    </Typography>
-                  </Box>
-
-                  {/* TOTAL CHECKS */}
-                  <Box
-                    sx={{
-                      p: 1.5,
-                      bgcolor: "#F5F7FB",
-                      borderRadius: 0.75,
-                      border: "1px solid #E0E7FF",
-                      textAlign: "center",
-                    }}
-                  >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", mb: 0.75, fontSize: "0.7rem" }}
-                    >
-                      TOTAL CHECKS
-                    </Typography>
-                    <Typography variant="body2" fontWeight="bold">
-                      {item.totalChecks}
-                    </Typography>
-                  </Box>
-
-                  {/* STATUS */}
-                  <Box
-                    sx={{
-                      p: 1.5,
-                      bgcolor: "#F5F7FB",
-                      borderRadius: 0.75,
-                      border: "1px solid #E0E7FF",
-                      textAlign: "center",
-                    }}
-                  >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", mb: 0.75, fontSize: "0.7rem" }}
-                    >
-                      STATUS
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      fontWeight="bold"
-                      sx={{ color: getStatusColor(item.status) }}
-                    >
-                      {item.status}
-                    </Typography>
-                  </Box>
-
-                  {/* LAST CODE */}
-                  <Box
-                    sx={{
-                      p: 1.5,
-                      bgcolor: "#F5F7FB",
-                      borderRadius: 0.75,
-                      border: "1px solid #E0E7FF",
-                      textAlign: "center",
-                    }}
-                  >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ display: "block", mb: 0.75, fontSize: "0.7rem" }}
-                    >
-                      LAST CODE
-                    </Typography>
-                    <Typography
-                      variant="body2"
-                      fontWeight="bold"
-                      sx={{
-                        color:
-                          item.lastCode >= 200 && item.lastCode < 300
-                            ? "#0CB65A"
-                            : item.lastCode >= 400 && item.lastCode < 500
-                            ? "#FFA500"
-                            : "#d32f2f",
-                      }}
-                    >
-                      {item.lastCode}
-                    </Typography>
-                  </Box>
-                </Box>
-
-                {/* Recent Checks Section - Inside same card */}
-                <Box
-                  sx={{
-                    p: { xs: 1.5, md: 2 },
-                    bgcolor: "#FFFFFF",
-                    borderRadius: "0 0 8px 8px",
-                    border: "1px solid #D1DFFF",
-                    borderTop: "none",
-                  }}
-                >
-                  <Typography
-                    variant="caption"
-                    fontWeight="bold"
-                    color="text.secondary"
-                    sx={{ display: "block", mb: 1.5 }}
-                  >
-                    Recent Checks
-                  </Typography>
-                  <Stack spacing={1}>
-                    {mockApiResponse.map((check) => (
-                      <Box
-                        key={check.id}
-                        sx={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: { xs: "flex-start", sm: "center" },
-                          flexDirection: { xs: "column", sm: "row" },
-                          p: 1,
-                          bgcolor: "#F5F7FB",
-                          borderRadius: 0.5,
-                          gap: 1,
-                        }}
-                      >
-                        <Box
-                          display="flex"
-                          gap={1}
-                          alignItems="center"
-                          flex={1}
-                        >
-                          <Box
-                            sx={{
-                              width: 8,
-                              height: 8,
-                              bgcolor:
-                                Number(check.statusCode) >= 200 &&
-                                Number(check.statusCode) < 300
-                                  ? "#0CB65A"
-                                  : Number(check.statusCode) >= 400 &&
-                                    Number(check.statusCode) < 500
-                                  ? "#FFA500"
-                                  : "#d32f2f",
-                              borderRadius: "50%",
-                              flexShrink: 0,
-                            }}
-                          />
-                          <Typography variant="caption" fontWeight="500">
-                            {check.statusCode} {check.url} {check.responseTime}
-                            ms
-                          </Typography>
-                        </Box>
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ ml: { xs: 0, sm: 2 }, whiteSpace: "nowrap" }}
-                        >
-                          {formatEpoch(check.date)}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Stack>
-                </Box>
-              </Box>
-            );
-          })}
-        </Stack>
+        <MonitoringStatus
+          urlArray={urlArray}
+          handleCheckNow={handleCheckNow}
+          handleEditFromStatus={handleEditFromStatus}
+          handleDeleteClick={handleDeleteClick}
+          checkingUrls={checkingUrls}
+        />
       </Paper>
 
       {/* Delete Confirmation Dialog */}

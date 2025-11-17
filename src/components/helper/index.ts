@@ -102,6 +102,13 @@ export const formSchema = z.object({
 
 export type FormType = z.infer<typeof formSchema>;
 
+export interface CheckResult {
+  id: string;
+  date: string; // epoch string
+  statusCode: number;
+  responseTime: number; // in ms
+}
+
 export interface URLObject {
   id: string;
   name: string;
@@ -110,6 +117,14 @@ export interface URLObject {
   timeout: number;
   expectedCodes: number[];
   enabled?: boolean | undefined;
+  // Status metrics
+  avgResponseTime?: number;
+  successRate?: number;
+  totalChecks?: number;
+  status?: "HEALTHY" | "FAILING" | "DEGRADED";
+  lastCode?: number;
+  // Check history
+  checkHistory?: CheckResult[];
 }
 
 export interface ApiResponseUrl {
@@ -288,3 +303,152 @@ export interface StatCardProps {
   value: string | number;
   color?: string;
 }
+
+// Generate mock data for testing
+export const generateMockData = (): URLObject[] => {
+  const now = Date.now();
+
+  // Mock URL 1: HEALTHY status (mostly 200s)
+  const healthyChecks: CheckResult[] = Array.from({ length: 5 }, (_, i) => ({
+    id: crypto.randomUUID(),
+    date: (now - (20 - i) * 60000).toString(), // Last 20 minutes
+    statusCode: Math.random() > 0.05 ? 200 : 201, // 95% success
+    responseTime: Math.floor(Math.random() * 100) + 150, // 150-250ms
+  }));
+
+  // Mock URL 2: DEGRADED status (mix of 200s and 500s)
+  const degradedChecks: CheckResult[] = Array.from({ length: 5 }, (_, i) => ({
+    id: crypto.randomUUID(),
+    date: (now - (20 - i) * 60000).toString(),
+    statusCode: Math.random() > 0.3 ? 200 : 500, // 70% success
+    responseTime: Math.floor(Math.random() * 200) + 300, // 300-500ms
+  }));
+
+  // Mock URL 3: FAILING status (mostly errors)
+  const failingChecks: CheckResult[] = Array.from({ length: 5 }, (_, i) => ({
+    id: crypto.randomUUID(),
+    date: (now - (15 - i) * 60000).toString(),
+    statusCode: Math.random() > 0.4 ? 500 : Math.random() > 0.5 ? 404 : 503, // 40% success
+    responseTime: Math.floor(Math.random() * 300) + 500, // 500-800ms
+  }));
+
+  // Mock URL 4: Mixed status codes (200, 201, 403, 404, 500)
+  const mixedChecks: CheckResult[] = Array.from({ length: 5 }, (_, i) => {
+    const rand = Math.random();
+    let statusCode: number;
+    if (rand > 0.6) statusCode = 200;
+    else if (rand > 0.4) statusCode = 201;
+    else if (rand > 0.25) statusCode = 403;
+    else if (rand > 0.1) statusCode = 404;
+    else statusCode = 500;
+
+    return {
+      id: crypto.randomUUID(),
+      date: (now - (25 - i) * 60000).toString(),
+      statusCode,
+      responseTime: Math.floor(Math.random() * 150) + 100, // 100-250ms
+    };
+  });
+
+  const calculateMetricsForChecks = (
+    checks: CheckResult[],
+    expectedCodes: number[]
+  ) => {
+    if (checks.length === 0) {
+      return {
+        avgResponseTime: 0,
+        successRate: 0,
+        status: "FAILING" as const,
+        lastCode: 0,
+      };
+    }
+
+    const totalChecks = checks.length;
+    const successfulChecks = checks.filter(
+      (check) =>
+        expectedCodes.includes(check.statusCode) ||
+        (check.statusCode >= 200 && check.statusCode < 300)
+    ).length;
+
+    const avgResponseTime = Math.round(
+      checks.reduce((sum, check) => sum + check.responseTime, 0) / totalChecks
+    );
+
+    const successRate = Math.round((successfulChecks / totalChecks) * 100);
+
+    const lastCheck = checks[checks.length - 1];
+    const lastCode = lastCheck.statusCode;
+
+    let status: "HEALTHY" | "FAILING" | "DEGRADED";
+    if (successRate >= 95) {
+      status = "HEALTHY";
+    } else if (successRate >= 70) {
+      status = "DEGRADED";
+    } else {
+      status = "FAILING";
+    }
+
+    return {
+      avgResponseTime,
+      successRate,
+      status,
+      lastCode,
+    };
+  };
+
+  const url1Metrics = calculateMetricsForChecks(healthyChecks, [200, 201]);
+  const url2Metrics = calculateMetricsForChecks(degradedChecks, [200]);
+  const url3Metrics = calculateMetricsForChecks(failingChecks, [200]);
+  const url4Metrics = calculateMetricsForChecks(mixedChecks, [200, 201]);
+
+  return [
+    {
+      id: crypto.randomUUID(),
+      name: "Jenkins API",
+      url: "https://jenkins.cloudtuner.ai",
+      interval: 60,
+      timeout: 5,
+      expectedCodes: [200, 201],
+      enabled: true,
+      checkHistory: healthyChecks,
+      totalChecks: healthyChecks.length,
+      ...url1Metrics,
+    },
+    {
+      id: crypto.randomUUID(),
+      name: "Backend Service",
+      url: "https://api.example.com",
+      interval: 30,
+      timeout: 10,
+      expectedCodes: [200],
+      enabled: true,
+      checkHistory: degradedChecks,
+      totalChecks: degradedChecks.length,
+      ...url2Metrics,
+    },
+    {
+      id: crypto.randomUUID(),
+      name: "Frontend Server",
+      url: "https://app.example.com",
+      interval: 45,
+      timeout: 8,
+      expectedCodes: [200],
+      enabled: true,
+      checkHistory: failingChecks,
+      totalChecks: failingChecks.length,
+      ...url3Metrics,
+    },
+    {
+      id: crypto.randomUUID(),
+      name: "Mixed Status API",
+      url: "https://mixed-api.example.com",
+      interval: 90,
+      timeout: 6,
+      expectedCodes: [200, 201],
+      enabled: true,
+      checkHistory: mixedChecks,
+      totalChecks: mixedChecks.length,
+      ...url4Metrics,
+    },
+  ];
+};
